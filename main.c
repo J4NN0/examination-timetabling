@@ -165,16 +165,16 @@ void graph_coloring(Solution *sol, int **conflicts, int *priority, int *stexams,
     sol[0].e[sol[0].currpos] = stexams[0]; //first color to first exam in priority
     sol[0].currpos++;
     colors[stexams[0]]=0;
-    for(i=1; i<nexams; i++){
+    for(i=1; i<nexams; i++){ //stexams[i] is the exam i'm considering
         currcol=0;
-        for(j=0; j<nexams; j++){
-            if(conflicts[stexams[i]][j]>0 && colors[stexams[j]]>=0)
-                if(currcol<=colors[stexams[j]])
-                    currcol++;
+        for(j=0; j<nexams; j++){ // i search if my exam has conflict with other exams
+            if(conflicts[stexams[i]][j]>0 && colors[j]>=0) // if there is a conflict and exam 'j' is scheduled (has a color) in time slot colors[j]
+                if(currcol<=colors[j])
+                    currcol = colors[j]+1;
         }
         sol[currcol].e[sol[currcol].currpos] = stexams[i];
         sol[currcol].currpos++;
-        colors[i]=currcol;
+        colors[stexams[i]]=currcol;
     }
 
     free(colors);
