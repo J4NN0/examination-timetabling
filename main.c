@@ -142,8 +142,6 @@ int main(int argc, char **argv)
     perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
 
     ///DEALLOCATION AND END OF PROGRAM
-    for(i=0; i<tmax; i++)
-        free(sol[i].e);
     free(sol);
     free(psol);
     free(mark);
