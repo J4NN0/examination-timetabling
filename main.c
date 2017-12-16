@@ -127,21 +127,26 @@ int main(int argc, char **argv)
     priority = calloc(nexams, sizeof(int)); //each indexes represent an exam and the value of that index represent the total number of conflicts between this exam and the others
     stexams = malloc(nexams*sizeof(int)); //it will contain a sorted number of indexes (each index represent an exam) based on the priority of the previous vector
 
-    for(i=0; i<nexams; i++){ // TO DO: merge with GENERATION OF CONFLICTS MATRIX
+    for(i=0; i<nexams; i++){ //TODO: merge with GENERATION OF CONFLICTS MATRIX
         for(j=0; j<nexams; j++)
             priority[i]+=conflicts[i][j];
         stexams[i]=i;
     }
+
     quickSort(priority, stexams, 0, nexams-1);
 
     fprintf(stdout, "Generation of feasible solution (Graph coloring)...\n");
     graph_coloring(sol, conflicts, priority, stexams, nexams, tmax);
 
-    mark = calloc(tmax, sizeof(int));
-    timeslots = malloc(tmax*sizeof(int));
+    for (i = 0; i < )
 
-    fprintf(stdout, "Swapping time slot and generation of a best solution...\n");
-    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
+    check_best_sol(conflicts, sol, psol, timeslots, nstudents, tmax);
+
+//    mark = calloc(tmax, sizeof(int));
+//    timeslots = malloc(tmax*sizeof(int));
+//
+//    fprintf(stdout, "Swapping time slot and generation of a best solution...\n");
+//    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
 
     ///DEALLOCATION AND END OF PROGRAM
     free(sol);
