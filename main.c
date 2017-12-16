@@ -132,21 +132,16 @@ int main(int argc, char **argv)
             priority[i]+=conflicts[i][j];
         stexams[i]=i;
     }
-
     quickSort(priority, stexams, 0, nexams-1);
 
     fprintf(stdout, "Generation of feasible solution (Graph coloring)...\n");
     graph_coloring(sol, conflicts, priority, stexams, nexams, tmax);
 
-    for (i = 0; i < )
+    mark = calloc(tmax, sizeof(int));
+    timeslots = malloc(tmax*sizeof(int));
 
-    check_best_sol(conflicts, sol, psol, timeslots, nstudents, tmax);
-
-//    mark = calloc(tmax, sizeof(int));
-//    timeslots = malloc(tmax*sizeof(int));
-//
-//    fprintf(stdout, "Swapping time slot and generation of a best solution...\n");
-//    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
+    fprintf(stdout, "Swapping time slot and generation of a best solution...\n");
+    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
 
     ///DEALLOCATION AND END OF PROGRAM
     free(sol);
