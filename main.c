@@ -10,7 +10,7 @@
 /* It's receives from the command line 3 files, respectively: instanceXX.stu instanceXX.exm instanceXX.slo */
 
 typedef struct solution{
-    int *e; //vectors says me if exam 'j' is scheduled for time slot 'i'. EX: sol[i].e[j]=1 mens exam 'j' is scheduled for time slot 'i'
+    int *e; //vectors says me if exam 'eX' is scheduled in the time slot 'i'. EX: sol[i].e[j]=1 mens exam 'e1' is scheduled in the time slot 'i'
     int dim; //allocated dim for vector e
     int currpos; //current position (real dim) of e
 } Solution;
@@ -19,7 +19,7 @@ int power(int base, int exp);
 void quickSort(int *arr, int *arr2, int low, int high);
 int partition(int *arr, int *arr2, int low, int high);
 void swap(int *a, int *b);
-void graph_coloring(Solution *sol, int **conflicts, int *priority, int *stexams, int nexams);
+void graph_coloring(Solution *sol, int **conflicts, int *priority, int *stexams, int nexams, int tmax);
 void perm(int pos, int **conflicts, Solution *sol, Solution **psol, int *timeslots, int *mark, int nexams, int nstudents, int tmax);
 void check_best_sol(int **conflicts, Solution *sol, Solution **psol, int *timeslots, int nstudents, int tmax);
 void free2d(int **matr, int n);
@@ -124,8 +124,8 @@ int main(int argc, char **argv)
         sol[i].currpos=0;
     }
 
-    priority = calloc(nexams, sizeof(int)); //each indices represent an exam and the value of that index represent the total number of conflicts between this exam and the others
-    stexams = malloc(nexams*sizeof(int)); //it will contain a sorted number of indices (each index represent an exam) based on the priority of the previous vector
+    priority = calloc(nexams, sizeof(int)); //each indexes represent an exam and the value of that index represent the total number of conflicts between this exam and the others
+    stexams = malloc(nexams*sizeof(int)); //it will contain a sorted number of indexes (each index represent an exam) based on the priority of the previous vector
 
     for(i=0; i<nexams; i++){ // TO DO: merge with GENERATION OF CONFLICTS MATRIX
         for(j=0; j<nexams; j++)
@@ -134,11 +134,13 @@ int main(int argc, char **argv)
     }
     quickSort(priority, stexams, 0, nexams-1);
 
-    graph_coloring(sol, conflicts, priority, stexams, nexams);
+    fprintf(stdout, "Generation of feasible solution (Graph coloring)...\n");
+    graph_coloring(sol, conflicts, priority, stexams, nexams, tmax);
 
     mark = calloc(tmax, sizeof(int));
     timeslots = malloc(tmax*sizeof(int));
 
+    fprintf(stdout, "Swapping time slot and generation of a best solution...\n");
     perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
 
     ///DEALLOCATION AND END OF PROGRAM
@@ -152,30 +154,42 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void graph_coloring(Solution *sol, int **conflicts, int *priority, int *stexams, int nexams)
+void graph_coloring(Solution *sol, int **conflicts, int *priority, int *stexams, int nexams, int tmax)
 {
-    int i=0, j=0, *colors, currcol=0;
+    int i=0, j=0, c=0, *colors, *available;
 
     colors = malloc(nexams*sizeof(int));
     for(i=0; i<nexams; i++)
-        colors[i]=-1;
+        colors[i]=-1; // 'i'=exam and colors[i]=assigned color, if=-1 not yet assigned
+
+    available = calloc(tmax, sizeof(int)); // 'i'=color and available[i]=0 if available, available[i]=1 unavailable
 
     sol[0].e[sol[0].currpos] = stexams[0]; //first color to first exam in priority
     sol[0].currpos++;
     colors[stexams[0]]=0;
-    for(i=1; i<nexams; i++){ //stexams[i] is the exam i'm considering
-        currcol=0;
+    for(i=1; i<nexams; i++){ //stexams[i] is the exam i'm considering (priority array)
         for(j=0; j<nexams; j++){ // i search if my exam has conflict with other exams
-            if(conflicts[stexams[i]][j]>0 && colors[j]>=0) // if there is a conflict and exam 'j' is scheduled (has a color) in time slot colors[j]
-                if(currcol<=colors[j])
-                    currcol = colors[j]+1;
+            if(conflicts[stexams[i]][j]>0 && colors[j]>=0) // if there is a conflict and this exam 'j' has a color, so colors[j]!=-1
+                available[colors[j]]=1; //set as unavailable
         }
-        sol[currcol].e[sol[currcol].currpos] = stexams[i];
-        sol[currcol].currpos++;
-        colors[stexams[i]]=currcol;
+
+        // find the first available color
+        for(c=0; c<tmax; c++)
+            if(available[c]==0)
+                break;
+
+        // assign the found color
+        sol[c].e[sol[c].currpos] = stexams[i];
+        sol[c].currpos++;
+        colors[stexams[i]]=c;
+
+        // reset available colors
+        for(c=0; c<tmax; c++)
+            available[c]=0;
     }
 
     free(colors);
+    free(available);
 }
 
 void perm(int pos, int **conflicts, Solution *sol, Solution **psol, int *timeslots, int *mark, int nexams, int nstudents, int tmax)
