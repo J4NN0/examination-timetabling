@@ -1,0 +1,5 @@
+.idea*
+instance*
+CMakeLists.txt
+cmake-build-debug/
+main
