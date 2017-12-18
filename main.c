@@ -233,8 +233,6 @@ void graph_coloring(Solution *sol, int **conflicts, int *stexams, int nexams, in
             if(available[c]==0)
                 break;
 
-        printf("c=%d\n", c);
-
         // assign the found color
         sol[c].e[sol[c].currpos] = stexams[i];
         sol[c].currpos++;
