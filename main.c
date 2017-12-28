@@ -1,34 +1,42 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <limits.h>
 
-#define N 3+1 //number of parameters have to receives from command line
-#define BUF 10
+#define N (3+1) // number of parameters have to receive from command line
+#define BUF 10 // buffer size for string
+#define MS 100 // multi-start metaheuristics
 
 /* It's receives from the command line 3 files, respectively: instanceXX.stu instanceXX.exm instanceXX.slo */
 
 typedef struct solution{
-    int *e; //vectors says me if exam 'eX' is scheduled in the time slot 'i'. EX: sol[i].e[j]=1 mens exam 'e1' is scheduled in the time slot 'i'
-    int dim; //allocated dim for vector 'e'
-    int currpos; //current position (real dim) of 'e'
+    int *e; // vectors says me if exam 'eX' is scheduled in the time slot 'i'. EX: sol[i].e[j]=1 mens exam 'e1' is scheduled in the time slot 'i'
+    int dim; // allocation
+    int currpos; // current position (real dim) of 'e'
 } Solution;
-
-int power(int base, int exp);
 
 void quickSort(int *arr, int *arr2, int low, int high);
 int partition(int *arr, int *arr2, int low, int high);
 void swap(int *a, int *b);
 
-void graph_coloring(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax);
+void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax);
+void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax);
+int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents);
+float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts, int tmax, int nstudents);
+int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int **tabulist, int nexams, int tmax);
+
+void dens(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax);
 void density_gen(int *density, int **conflicts, Solution *sol, int tmax);
 void gauss_sorting(int *density, int *newdens, int *idcorr, int dim, int *mark);
 int search_tmp_max(int *density, int *mark, int *id, int dim, int max_tmp);
 
+void swap_freetimeslots(Solution *sol, Solution **psol, int **conflicts, int *timeslots, int nexams, int nstudents, int tmax, int freets);
 void disp(int pos, int *valfreets, int **conflicts, Solution *sol, Solution **psol, int *mark, int *timeslots, int *freetimeslots, int nexams, int nstudents, int tmax, int freets);
+
 //void perm(int pos, int **conflicts, Solution *sol, Solution **psol, int *timeslots, int *mark, int nexams, int nstudents, int tmax);
-void check_best_sol(int **conflicts, Solution *sol, Solution **psol, int *timeslots, int *freetimeslots, int nstudents, int tmax, int freets);
+
+void check_best_sol(Solution *sol, Solution **psol, int **conflicts, int *timeslots, int nstudents, int tmax);
+int power(int base, int exp);
 
 void free2d(int **matr, int n);
 
@@ -37,18 +45,14 @@ float obj=INT_MAX;
 int main(int argc, char **argv)
 {
     FILE *fp=NULL;
-
     Solution *sol, **psol;
-    int *mark, *priority, *stexams, *density, *newdens, *idcorr, *timeslots, *freetimeslots, *valfreets;
-
     int **table_schedule=NULL, **conflicts=NULL; //from instanceXX.stu and instanceXX.exm
     int tmax=0; //from instanceXX.slo
-
     int i=0, j=0, k=0, nexams=0, nstudents=-1, tmp_dim=1000, examid=0, nstudconf=0, freets=0;
     char buffer[BUF], studentid[BUF], student_tmp[BUF]=" ";
 
     if(argc!=N){
-        fprintf(stderr, "Usage: <%s> <instanceXX.stu> <instanceXX.exm> <instanceXX.slo>\n", argv[0]);
+        fprintf(stderr, "Error. Usage: <%s> <instanceXX.stu> <instanceXX.exm> <instanceXX.slo>\n", argv[0]);
         exit(0);
     }
 
@@ -138,80 +142,111 @@ int main(int argc, char **argv)
 
     ///SOLUTION OF THE PROBLEM
     psol = malloc(tmax*sizeof(Solution*));
-    sol = malloc(tmax*sizeof(Solution));
-    for(i=0; i<tmax; i++){
-        sol[i].e = malloc((nexams/2)*sizeof(int));
-        sol[i].dim=nexams/2;
+    sol = malloc((tmax+1)*sizeof(Solution)); // i generate an extra time slot for exams i can't schedule
+    for(i=0; i<tmax+1; i++){
+        sol[i].e = malloc(nexams*sizeof(int)); // i allocate for nexams to avoid realloc
+        sol[i].dim = nexams;
         sol[i].currpos=0;
     }
 
-    priority = calloc(nexams, sizeof(int)); //each indexes represent an exam and the value of that index represent the total number of conflicts between this exam and the others
-    stexams = malloc(nexams*sizeof(int)); //it will contain a sorted number of indexes (each index represent an exam) based on the priority of the previous vector
+    fprintf(stdout, "Searching several feasible solution...\n");
+    feasible_search(sol, psol, conflicts, nexams, nstudents, tmax);
 
-    for(i=0; i<nexams; i++){ // TO DO: merge with GENERATION OF CONFLICTS MATRIX
-        for(j=0; j<nexams; j++)
-            priority[i]+=conflicts[i][j];
-        stexams[i]=i;
-    }
-    quickSort(priority, stexams, 0, nexams-1);
-
-    fprintf(stdout, "Generation of a feasible solution (Graph coloring)...\n");
-    graph_coloring(sol, conflicts, stexams, nexams, tmax);
-
-    fprintf(stdout, "Generation of 'density array' (Density generation)...\n");
-    density = calloc(tmax, sizeof(int));
-    density_gen(density, conflicts, sol, tmax);
-
-    fprintf(stdout, "Sorting of 'density array' (Gauss function)...\n");
-    for(i=0; i<tmax; i++)
-        if(density[i]==0)
-            freets++; // count how much free time slots i have
-    newdens = malloc((tmax-freets)*sizeof(int)); // newdens=gauss_sorting(density)
-    idcorr = malloc((tmax-freets)*sizeof(int)); // it will contain the index corresponding to the value of: newdens[i]=value - idcorr[i]=idexams
-    mark = calloc(tmax, sizeof(int));
-    gauss_sorting(density, newdens, idcorr, tmax-freets, mark);
-
-    //Reset 'mark' because i use it in the previous function
-    for(i=0; i<tmax; i++)
-        mark[i]=0;
-
-    fprintf(stdout, "Searching for a better solution...\n\n");
-    timeslots = malloc(tmax*sizeof(int));
-    if(freets!=0){
-        for(i=0; i<tmax-freets; i++) // set in 'timeslots' the new order of exams generated in 'gauss_sorting()'
-            timeslots[i]=idcorr[i];
-        freetimeslots = malloc((tmax-freets)*sizeof(int));
-        valfreets = malloc(tmax*sizeof(int)); // this array'll contain the number of time slots from 0 to tmax-1
-        for(i=0; i<tmax; i++) // initialization of 'valfreets', i'll put a disposition of these values in 'freetimeslots' that says me in which slot i have to put the free time slot
-            valfreets[i]=i;
-        disp(0, valfreets, conflicts, sol, psol, mark, timeslots, freetimeslots, nexams, nstudents, tmax, freets);
-    }
-    else{
-        for(i=0; i<tmax; i++)
-            timeslots[i]=idcorr[i];
-        check_best_sol(conflicts, sol, psol, timeslots, NULL, nstudents, tmax, freets);
-    }
+    fprintf(stdout, "Best obj is: %.3f\n", obj);
 
 //    fprintf(stdout, "Swapping time slot and searching for a better solution...\n");
-//    timeslots = malloc(tmax*sizeof(int));
 //    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
 
     ///DEALLOCATION AND END OF PROGRAM
+    for(i=0; i<tmax; i++)
+        free(sol[i].e);
     free(sol);
     free(psol);
-    free(density);
-    free(mark);
-    free(timeslots);
-    free(freetimeslots);
     free2d(table_schedule, tmp_dim);
     free2d(conflicts, nexams);
 
     return 0;
 }
 
-void graph_coloring(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax)
+void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax)
 {
-    int i=0, j=0, c=0, *colors, *available;
+    int i=0, j=0, k=0, f=0, swapn=nexams/2, swi=0, swj=0, tmp=0;
+    int *timeslots, *priority, *stexams;
+
+    timeslots = malloc(tmax*sizeof(int));
+    for(i=0; i<tmax; i++)
+        timeslots[i]=i;
+
+    priority = calloc(nexams, sizeof(int)); // each indexes represent an exam and the value of that index represent the total number of conflicts between this exam and the others
+    stexams = malloc(nexams*sizeof(int)); // it will contain a sorted number of indexes (each index represent an exam) based on the priority of the previous array
+
+    for(i=0; i<nexams; i++){
+        for(j=0; j<nexams; j++)
+            if(conflicts[i][j]!=0)
+                priority[i]++;
+        stexams[i]=i;
+    }
+    quickSort(priority, stexams, 0, nexams-1); // decreasing sorting
+
+    fprintf(stdout, "Graph coloring on sorted priority array of exams...\n");
+    graph_coloring_greedy(sol, conflicts, stexams, nexams, tmax);
+    if(sol[tmax].currpos>0){ // if i have exams in my extra time slot i have to schedule those exams
+        fprintf(stdout, "Can't found it. Apllying Tabù Search with %d exams in extra time slot...\n", sol[tmax].currpos);
+        if(tabu_search(sol, conflicts, nexams, tmax, nstudents)==0) {
+            check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
+            dens(sol, psol, conflicts, nexams, nstudents, tmax);
+        }
+        else
+            fprintf(stdout, "Aborting Tabù Search...\n\n");
+    }
+    else{
+        check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
+        dens(sol, psol, conflicts, nexams, nstudents, tmax);
+    }
+
+    fprintf(stdout, "Multi-start metaheuristics...\n");
+    for(i=0; i<MS; i++){
+        for(j=0; j<tmax+1; j++) // reset 'sol'
+            sol[j].currpos=0;
+
+        for(k=0; k<swapn; k++){
+            swi = rand() % nexams;
+            swj = rand() % nexams;
+
+            tmp = priority[swi];
+            priority[swi] = priority[swj];
+            priority[swj] = tmp;
+
+            tmp = stexams[swi];
+            stexams[swi] = stexams[swj];
+            stexams[swj] = tmp;
+        }
+
+        fprintf(stdout, "Graph coloring on %d metaheuristics possible solution...\n", f++);
+        graph_coloring_greedy(sol, conflicts, stexams, nexams, tmax);
+        if(sol[tmax].currpos>0){ // if i have exams in my extra time slot i have to schedule those exams
+            fprintf(stdout, "Can't found it. Apllying Tabù Search with %d exams in extra time slot...\n", sol[tmax].currpos);
+            if(tabu_search(sol, conflicts, nexams, tmax, nstudents)==0) {
+                check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
+                dens(sol, psol, conflicts, nexams, nstudents, tmax);
+            }
+            else
+                fprintf(stdout, "Aborting Tabù Search...\n");
+        }
+        else{
+            check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
+            dens(sol, psol, conflicts, nexams, nstudents, tmax);
+        }
+    }
+
+    free(timeslots);
+    free(priority);
+    free(stexams);
+}
+
+void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax)
+{
+    int i=0, j=0, c=0, flag=0, *colors, *available;
 
     colors = malloc(nexams*sizeof(int));
     for(i=0; i<nexams; i++)
@@ -219,24 +254,31 @@ void graph_coloring(Solution *sol, int **conflicts, int *stexams, int nexams, in
 
     available = calloc(tmax, sizeof(int)); // 'i'=color and available[i]=0 available, available[i]=1 unavailable
 
-    sol[0].e[sol[0].currpos] = stexams[0]; //first color to first exam in priority
+    sol[0].e[sol[0].currpos] = stexams[0]; // first color to first exam in priority
     sol[0].currpos++;
     colors[stexams[0]]=0;
-    for(i=1; i<nexams; i++){ //stexams[i] is the exam i'm considering (priority array)
+    for(i=1; i<nexams; i++){ // stexams[i] is the exam i'm considering (priority array)
         for(j=0; j<nexams; j++){ // i search if my exam has conflict with other exams
             if(conflicts[stexams[i]][j]>0 && colors[j]>=0) // if there is a conflict and this exam 'j' has a color, so colors[j]!=-1
                 available[colors[j]]=1; //set as unavailable
         }
 
         // find the first available color
-        for(c=0; c<tmax; c++)
+        flag=0;
+        for(c=0; c<tmax && flag==0; c++)
             if(available[c]==0)
-                break;
+                flag=1;
+        c--;
 
-        // assign the found color
-        sol[c].e[sol[c].currpos] = stexams[i];
-        sol[c].currpos++;
-        colors[stexams[i]]=c;
+        if(flag==0){ // if i can't find a color for that exam i put it in my extra time slot and i'll schedule it after
+            sol[tmax].e[sol[tmax].currpos] = stexams[i];
+            sol[tmax].currpos++;
+        }
+        else{ // assign the found color
+            sol[c].e[sol[c].currpos] = stexams[i];
+            sol[c].currpos++;
+            colors[stexams[i]]=c;
+        }
 
         // reset available colors
         for(c=0; c<tmax; c++)
@@ -247,20 +289,166 @@ void graph_coloring(Solution *sol, int **conflicts, int *stexams, int nexams, in
     free(available);
 }
 
+int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents)
+{
+    int i=0, j=0, ts=-1, **tabulist;
+    float obj_min=INT_MAX, obj_tmp=0;
+
+    tabulist = calloc(nexams, sizeof(int*)); // for each exam says me if i can put exam 'i' in time slot 'j'
+    for(i=0; i<nexams; i++)
+        tabulist[i] = calloc(tmax, sizeof(int)); // 0 = yes, 1 = no
+
+    for(i=0; i<sol[tmax].currpos; i++){ // i use this cycle to take exams i put in the extra time slot
+        obj_min=INT_MAX;
+        ts=-1;
+        for(j=0; j<tmax; j++){ // 'j' is the hypothetical time slot in which i want to put my exam sol[tmax].e[i]
+            if(tabulist[sol[tmax].e[i]][j]==0){
+                obj_tmp = confl_exams(sol, sol[tmax].e[i], j, conflicts, tmax, nstudents); // i calculate for that time slot the temporary 'obj'
+                if(obj_tmp<obj_min){ // if this obj is better than the previous i remember the time slot in which my 'obj' it the best
+                    obj_min = obj_tmp;
+                    ts = j;
+                }
+            }
+        }
+        if(ts==-1) // one exam has full his 'tabulist'
+            return 1;
+        schedule_exam(sol, sol[tmax].e[i], ts, conflicts, tabulist, nexams, tmax); // i schedule my exam in time slot 'ts' which has the best temporary 'obj'
+    }
+
+    free2d(tabulist, nexams);
+
+    return 0;
+}
+
+float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts, int tmax, int nstudents)
+{
+    int i=0, k=0;
+    float obj_tmp=0;
+
+    /* i calculate all the conflicts between my exam and all the others exams excluding exams in time slot 'timeslot',
+        because this time slot is the hypothetic time slot in which i want to schedule my exam and i want to minimize
+        the 'obj' with conflicting exams */
+
+    /*//down cycle
+    for(i=timeslot+1; i<tmax; i++){ // cycle in time slot sol[timeslot, ..., tmax]
+        for(k=0; k<=i+5 && k<sol[i].currpos; k++){ // cycle in sol[i].e[0, ..., k]
+            obj_tmp += conflicts[exam][sol[i].e[k]]*power(2, 5-(i-timeslot));
+        }
+    }
+
+    //up cycle
+    for(i=0; i<timeslot; i++){ // cycle in time slot sol[0, ..., timeslot]
+        if(timeslot-i>=5){
+            for(k=0; k<sol[i].currpos; k++){ // cycle in sol[i].e[0, ..., k]
+                obj_tmp += conflicts[exam][sol[i].e[k]]*power(2, 5-(timeslot-i));
+            }
+        }
+    }
+
+    return obj_tmp/nstudents;*/
+
+    // instead of search for the min 'tmp_obj' i search time slot with less number of conflicting exam with the mine
+    for(i=0; i<sol[timeslot].currpos; i++){
+        if(conflicts[exam][sol[timeslot].e[i]]>0)
+            k++;
+    }
+
+    return k;
+}
+
+int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int **tabulist, int nexams, int tmax)
+{
+    int i=0, j=0, nconfl=0, flag=0, *idel;
+
+    idel = malloc(nexams*sizeof(int));
+
+    for(i=0; i<sol[ts].currpos; i++){ // searching for conflicting exams with exam i want to schedule in time slot 'ts'
+        if(conflicts[exam][sol[ts].e[i]]>0){
+            sol[tmax].e[sol[tmax].currpos] = sol[ts].e[i]; // put conflicting exam in the extra time slot
+            sol[tmax].currpos++;
+            if(sol[tmax].currpos>=sol[tmax].dim){ // i need to realloc sol[tmax].e, because of it was allocate for 'nexams'
+                sol[tmax].dim = sol[tmax].dim * 2;
+                sol[tmax].e = realloc(sol[tmax].e, sol[tmax].dim*sizeof(int));
+            }
+            sol[ts].e[i] = -1; // delete exam from that time slot
+            idel[nconfl]=i; // remember index corresponding delete exam
+            nconfl++; // count how many conflicting exams there are with my exam
+        }
+    }
+
+    if(nconfl>0){
+        for(i=0; i<sol[ts].currpos && flag==0; i++){
+            if(sol[ts].e[sol[ts].currpos-1-i]!=-1){ // from the last value of sol[ts].e[last] search for a not delete exam
+                sol[ts].e[idel[j]] = sol[ts].e[sol[ts].currpos-1-i]; // put it in the first position contains delete exam
+                j++;
+                if(j==nconfl) // i replaced all delete exam
+                    flag = 1;
+            }
+        }
+    }
+
+    sol[ts].currpos = sol[ts].currpos-nconfl+1; // resize 'currpos' of time slot 'ts'
+    sol[ts].e[sol[ts].currpos-1] = exam; // add exam i want to schedule in time slot 'ts'
+    tabulist[exam][ts]=1; // save move as tabù
+
+    free(idel);
+
+    return nconfl;
+}
+
+void dens(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax)
+{
+    int i=0, freets=0;
+    int *mark, *density, *newdens, *idcorr, *timeslots;
+
+    density = calloc(tmax, sizeof(int));
+    fprintf(stdout, "Generation of 'density array'...\n");
+    density_gen(density, conflicts, sol, tmax);
+
+    for(i=0; i<tmax; i++)
+        if(density[i]==0)
+            freets++; // count how much free time slots i have
+
+    mark = calloc(tmax, sizeof(int));
+    newdens = malloc((tmax-freets)*sizeof(int)); // newdens=gauss_sorting(density)
+    idcorr = malloc((tmax-freets)*sizeof(int)); // it will contain the index corresponding to the value of: newdens[i]=value <-> idcorr[i]=idexams
+    gauss_sorting(density, newdens, idcorr, tmax-freets, mark);
+
+    timeslots = malloc(tmax*sizeof(int));
+
+    if(freets!=0){
+        fprintf(stdout, "Detected free time slot...\n");
+        for(i=0; i<tmax-freets; i++) // set in 'timeslots' the new order of exams generated in 'gauss_sorting()'
+            timeslots[i]=idcorr[i];
+        swap_freetimeslots(sol, psol, conflicts, timeslots, nexams, nstudents, tmax, freets);
+    }
+    else{
+        for(i=0; i<tmax; i++)
+            timeslots[i]=idcorr[i];
+        check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
+    }
+
+    free(density);
+    free(newdens);
+    free(idcorr);
+    free(mark);
+    free(timeslots);
+}
+
 void density_gen(int *density, int **conflicts, Solution *sol, int tmax)
 {
     int i=0, j=0, k=0, t=0;
 
-    ///DENSITY 2^(5-i)*Ne,e'
-    for(i=0; i<tmax; i++){ //cycle in time slot sol[0, ..., tmax-1]
+    ///DENSITY Ne,e'
+    for(i=0; i<tmax; i++){ //cycle in time slot sol[0, ..., tmax]
         for(k=0; k<sol[i].currpos; k++){ //cycle in sol[i].e[0, ..., k] - exams i scheduled in time slot 'i'
             for(j=0; j<=i+5 && j<tmax; j++){ //after 5 i don't pay no kind of penalty - cycle to compare time slot 'i' with time slot 'j'
-                for(t=0; t<sol[j].currpos; t++){ //i have to compare all exams
+                for(t=0; t<sol[j].currpos; t++){ //i have to compare all exams, for this reason 'j' and 't' start from zero
                     if(sol[i].e[k]!=sol[j].e[t]){
                         if(j>i)
-                            density[i] += conflicts[sol[i].e[k]][sol[j].e[t]]*power(2, 5-(j-i));
+                            density[i] += conflicts[sol[i].e[k]][sol[j].e[t]];
                         else
-                            density[i] += conflicts[sol[i].e[k]][sol[j].e[t]]*power(2, 5-(i-j));
+                            density[i] += conflicts[sol[i].e[k]][sol[j].e[t]];
                     }
                 }
             }
@@ -308,12 +496,30 @@ int search_tmp_max(int *density, int *mark, int *id, int dim, int max_tmp)
     return max_tmp;
 }
 
+void swap_freetimeslots(Solution *sol, Solution **psol, int **conflicts, int *timeslots, int nexams, int nstudents, int tmax, int freets)
+{
+    int i=0, *mark, *freetimeslots, *valfreets;
+
+    /* Work in progess for thi section */
+
+    mark = calloc(tmax, sizeof(int));
+    freetimeslots = malloc((tmax-freets)*sizeof(int));
+    valfreets = malloc(tmax*sizeof(int)); // this array'll contain the number of time slots from 0 to tmax-1
+    for(i=0; i<tmax; i++) // initialization of 'valfreets', i'll put a disposition of these values in 'freetimeslots' that says me in which slot i have to put the free time slot
+        valfreets[i]=i;
+
+    disp(0, valfreets, conflicts, sol, psol, mark, timeslots, freetimeslots, nexams, nstudents, tmax, freets);
+
+    free(freetimeslots);
+    free(valfreets);
+}
+
 void disp(int pos, int *valfreets, int **conflicts, Solution *sol, Solution **psol, int *mark, int *timeslots, int *freetimeslots, int nexams, int nstudents, int tmax, int freets)
 {
     int i=0;
 
     if(pos>=freets){
-        check_best_sol(conflicts, sol, psol, timeslots, freetimeslots, nstudents, tmax, freets);
+        check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
         return ;
     }
 
@@ -325,8 +531,6 @@ void disp(int pos, int *valfreets, int **conflicts, Solution *sol, Solution **ps
             mark[i]=0;
         }
     }
-
-    return ;
 }
 
 /*
@@ -352,12 +556,12 @@ void perm(int pos, int **conflicts, Solution *sol, Solution **psol, int *timeslo
 }
 */
 
-void check_best_sol(int **conflicts, Solution *sol, Solution **psol, int *timeslots, int *freetimeslots, int nstudents, int tmax, int freets)
+void check_best_sol(Solution *sol, Solution **psol, int **conflicts, int *timeslots, int nstudents, int tmax)
 {
     int i=0, j=0, k=0, t=0, flag=0, *inserted;
     float obj_tmp=0;
 
-    if(freets!=0){
+    /*if(freets!=0){
         inserted = calloc(tmax, sizeof(int));
 
         //Searching a free time slot
@@ -381,14 +585,13 @@ void check_best_sol(int **conflicts, Solution *sol, Solution **psol, int *timesl
                     psol[i] = &sol[timeslots[j]];
                     flag=1;
                 }
-
             }
         }
-    }
-    else{
-        for(i=0; i<tmax; i++)
-            psol[i] = &sol[timeslots[i]];
-    }
+        free(inserted);
+    }*/
+
+    for(i=0; i<tmax; i++)
+        psol[i] = &sol[timeslots[i]];
 
     ///MIN OBJ 2^(5-i)*Ne,e'/|S|
     for(i=0; i<tmax-1; i++){ //cycle in time slot sol[0, ..., tmax-1]
@@ -411,8 +614,6 @@ void check_best_sol(int **conflicts, Solution *sol, Solution **psol, int *timesl
         fprintf(stdout, "New obj found. NEW: %f\n", obj_tmp/nstudents);
         obj = obj_tmp/nstudents;
     }
-
-    free(inserted);
 }
 
 void quickSort(int *arr, int *arr2, int low, int high)
@@ -438,7 +639,7 @@ int partition(int *arr, int *arr2, int low, int high)
         }
     }
 
-    swap(&arr[i + 1], &arr[high]);
+    swap(&arr[i+1], &arr[high]);
     swap(&arr2[i+1], &arr2[high]);
 
     return (i+1);
@@ -454,6 +655,9 @@ void swap(int *a, int *b)
 int power(int base, int exp)
 {
     int i=0, res=1;
+
+    if(exp==0)
+        return 1;
 
     for(i=0; i<exp; i++)
         res *= base;
