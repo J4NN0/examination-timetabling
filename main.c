@@ -6,6 +6,7 @@
 #define N (3+1) // number of parameters have to receive from command line
 #define BUF 10 // buffer size for string
 #define MS 100 // multi-start metaheuristics
+#define TS 1000000 // max iteration for tabu search
 
 /* It's receives from the command line 3 files, respectively: instanceXX.stu instanceXX.exm instanceXX.slo */
 
@@ -22,8 +23,9 @@ void swap(int *a, int *b);
 void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax);
 void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax);
 int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents);
+int is_forbidden(Solution *sol, int **conflicts, int exam, int timeslot, int *tabulist, int tls);
 float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts, int tmax, int nstudents);
-int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int **tabulist, int nexams, int tmax);
+int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int *tabulist, int *next, int dimtabu, int nexams, int tmax);
 
 void dens(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax);
 void density_gen(int *density, int **conflicts, Solution *sol, int tmax);
@@ -48,7 +50,7 @@ int main(int argc, char **argv)
     Solution *sol, **psol;
     int **table_schedule=NULL, **conflicts=NULL; //from instanceXX.stu and instanceXX.exm
     int tmax=0; //from instanceXX.slo
-    int i=0, j=0, k=0, nexams=0, nstudents=-1, tmp_dim=1000, examid=0, nstudconf=0, freets=0;
+    int i=0, j=0, k=0, nexams=0, nstudents=-1, tmp_dim=1000, examid=0, nstudconf=0;
     char buffer[BUF], studentid[BUF], student_tmp[BUF]=" ";
 
     if(argc!=N){
@@ -213,25 +215,17 @@ void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams
             swi = rand() % nexams;
             swj = rand() % nexams;
 
-            tmp = priority[swi];
-            priority[swi] = priority[swj];
-            priority[swj] = tmp;
-
             tmp = stexams[swi];
             stexams[swi] = stexams[swj];
             stexams[swj] = tmp;
         }
 
-        fprintf(stdout, "Graph coloring on %d metaheuristics possible solution...\n", f++);
         graph_coloring_greedy(sol, conflicts, stexams, nexams, tmax);
         if(sol[tmax].currpos>0){ // if i have exams in my extra time slot i have to schedule those exams
-            fprintf(stdout, "Can't found it. Apllying Tabù Search with %d exams in extra time slot...\n", sol[tmax].currpos);
             if(tabu_search(sol, conflicts, nexams, tmax, nstudents)==0) {
                 check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
                 dens(sol, psol, conflicts, nexams, nstudents, tmax);
             }
-            else
-                fprintf(stdout, "Aborting Tabù Search...\n");
         }
         else{
             check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
@@ -291,18 +285,18 @@ void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nex
 
 int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents)
 {
-    int i=0, j=0, ts=-1, **tabulist;
+    int i=0, j=0, k=0, ts=-1, *tabulist, dimtabu=tmax/2, next=0;
     float obj_min=INT_MAX, obj_tmp=0;
 
-    tabulist = calloc(nexams, sizeof(int*)); // for each exam says me if i can put exam 'i' in time slot 'j'
-    for(i=0; i<nexams; i++)
-        tabulist[i] = calloc(tmax, sizeof(int)); // 0 = yes, 1 = no
+    tabulist = malloc(dimtabu*sizeof(int));
+    for(i=0; i<dimtabu; i++)
+        tabulist[i]=-1; // '-1' means no value
 
-    for(i=0; i<sol[tmax].currpos; i++){ // i use this cycle to take exams i put in the extra time slot
+    for(i=0, k=0; i<sol[tmax].currpos; i++, k++){ // i use this cycle to take exams i put in the extra time slot
         obj_min=INT_MAX;
         ts=-1;
         for(j=0; j<tmax; j++){ // 'j' is the hypothetical time slot in which i want to put my exam sol[tmax].e[i]
-            if(tabulist[sol[tmax].e[i]][j]==0){
+            if(is_forbidden(sol, conflicts, sol[tmax].e[i], j, tabulist, dimtabu)==0){
                 obj_tmp = confl_exams(sol, sol[tmax].e[i], j, conflicts, tmax, nstudents); // i calculate for that time slot the temporary 'obj'
                 if(obj_tmp<obj_min){ // if this obj is better than the previous i remember the time slot in which my 'obj' it the best
                     obj_min = obj_tmp;
@@ -310,12 +304,33 @@ int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstude
                 }
             }
         }
-        if(ts==-1) // one exam has full his 'tabulist'
+        if(ts==-1) // all moves are forbidden
             return 1;
-        schedule_exam(sol, sol[tmax].e[i], ts, conflicts, tabulist, nexams, tmax); // i schedule my exam in time slot 'ts' which has the best temporary 'obj'
+        if(k==TS) // i've reached the max allowed iteration
+            return 1;
+        schedule_exam(sol, sol[tmax].e[i], ts, conflicts, tabulist, &next, dimtabu, nexams, tmax); // i schedule my exam in time slot 'ts' which has the best temporary 'obj'
     }
 
-    free2d(tabulist, nexams);
+    free(tabulist);
+
+    return 0;
+}
+
+int is_forbidden(Solution *sol, int **conflicts, int exam, int timeslot, int *tabulist, int dimtabu)
+{
+    int i=0, j=0;
+
+    for(i=0; i<dimtabu; i++){
+        if(tabulist[i]!=-1){
+            for(j=0; j<sol[timeslot].currpos; j++){
+                if(tabulist[i]==sol[timeslot].e[j] && conflicts[tabulist[i]][exam]>0){
+                    // search for each exam in the tabulist if it is presents in the timeslot i'm considering
+                    // if it is presents and it has conflict with exam i want to schedule
+                    return 1;
+                }
+            }
+        }
+    }
 
     return 0;
 }
@@ -350,13 +365,13 @@ float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts, int tm
     // instead of search for the min 'tmp_obj' i search time slot with less number of conflicting exam with the mine
     for(i=0; i<sol[timeslot].currpos; i++){
         if(conflicts[exam][sol[timeslot].e[i]]>0)
-            k++;
+            k += conflicts[exam][sol[timeslot].e[i]];
     }
 
     return k;
 }
 
-int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int **tabulist, int nexams, int tmax)
+int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int *tabulist, int *next, int dimtabu, int nexams, int tmax)
 {
     int i=0, j=0, nconfl=0, flag=0, *idel;
 
@@ -389,7 +404,11 @@ int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int **tabuli
 
     sol[ts].currpos = sol[ts].currpos-nconfl+1; // resize 'currpos' of time slot 'ts'
     sol[ts].e[sol[ts].currpos-1] = exam; // add exam i want to schedule in time slot 'ts'
-    tabulist[exam][ts]=1; // save move as tabù
+
+    tabulist[(*next)]=exam; // save move as tabù
+    (*next)++;
+    if((*next)>=dimtabu)
+        (*next)=0;
 
     free(idel);
 
