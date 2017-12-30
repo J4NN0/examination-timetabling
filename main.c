@@ -6,7 +6,7 @@
 
 #define N (3+1) // number of parameters have to receive from command line
 #define BUF 10 // buffer size for string
-#define MS 100 // multi-start metaheuristics
+#define MS 50 // multi-start metaheuristics
 #define TS 1000000 // max iteration for tabu search
 
 /* It's receives from the command line 3 files, respectively: instanceXX.stu instanceXX.exm instanceXX.slo */
@@ -44,8 +44,11 @@ int power(int base, int exp);
 
 void free2d(int **matr, int n);
 void checksol(int **conflicts, Solution *sol, int tmax);
+void print_sol(Solution *sol, int tmax);
 
 float obj=INT_MAX;
+
+Solution *bestSol;
 
 int main(int argc, char **argv)
 {
@@ -71,9 +74,17 @@ int main(int argc, char **argv)
         exit(-2);
     }
 
+    int ch;
     //reading of .exm to know how many exams there are
-    while(fgets(buffer, BUF, fp)!=NULL)
-        nexams++;
+    while(!feof(fp))
+    {
+        ch = fgetc(fp);
+        if(ch == '\n')
+        {
+            nexams++;
+        }
+    }
+    nexams--;
 
     fclose(fp);
     fprintf(stdout, "Done\n\n");
@@ -166,28 +177,29 @@ int main(int argc, char **argv)
     for(i=0; i<tmax; i++)
         timeslots[i]=i; // at the beginning is from 0 to 'tmax', it will modified after
 
+    bestSol = sol;
     fprintf(stdout, "Local searching...\n");
-    for (i = 0; i < 100; ++i) {
+    for (i = 0; i < 10; ++i) {
         exam_local_search(sol, psol, conflicts, nexams, nstudents, tmax);
         check_best_sol(sol, psol, conflicts,timeslots, nstudents, tmax);
     }
 
-    check_best_sol(sol, psol, conflicts,timeslots, nstudents, tmax);
     fprintf(stdout, "Best obj is: %.3f\n", obj);
-
 
 //    fprintf(stdout, "Swapping time slot and searching for a better solution...\n");
 //    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
 
-    checksol(conflicts,sol,tmax);
+    checksol(conflicts,bestSol,tmax);
 
     for (i=0;i<tmax;++i) {
         printf("%d:\t",i);
-        for (j=0;j<sol[i].currpos;++j) {
-            printf("%d ",sol[i].e[j]);
+        for (j=0;j<bestSol[i].currpos;++j) {
+            printf("%d ",bestSol[i].e[j]);
         }
         printf("\n");
     }
+
+    print_sol(bestSol,tmax);
 
     ///DEALLOCATION AND END OF PROGRAM
     for(i=0; i<tmax; i++)
@@ -197,12 +209,25 @@ int main(int argc, char **argv)
     free2d(table_schedule, tmp_dim);
     free2d(conflicts, nexams);
 
+    fprintf(stdout, "Best obj is: %.3f\n", obj);
     return 0;
+}
+
+void print_sol(Solution *sol, int tmax) {
+    int i,j;
+
+    FILE* fout = fopen("solution-file", "w");
+    for (i=0;i<tmax;++i) {
+        for (j=0;j<sol[i].currpos;++j) {
+            fprintf(fout, "%d %d\n", sol[i].e[j]+1, i+1);
+        }
+    }
+    fclose(fout);
 }
 
 void exam_local_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax) {
     int examId, j, k;
-    int *slotsToAvoid = calloc((size_t) tmax, sizeof(int));
+    int *slotsToAvoid = calloc(tmax, sizeof(int));
 
     examId = rand() % nexams;   //id of random exam
 
@@ -223,8 +248,9 @@ void exam_local_search(Solution *sol, Solution **psol, int **conflicts, int nexa
         }
     }
 
-    for (j = 0; j < 10; ++j) {
+    for (j = 0; j < 100; ++j) {
         int randSlot = rand() % tmax;
+
         if (slotsToAvoid[randSlot] == 0) {
             if (sol[randSlot].currpos >= sol[randSlot].dim) { // i need to realloc sol[randSlot].e, because of it was allocate for 'nexams'
                 sol[randSlot].dim = sol[randSlot].dim * 2;
@@ -718,6 +744,7 @@ void check_best_sol(Solution *sol, Solution **psol, int **conflicts, int *timesl
     if((obj_tmp/nstudents)<obj){
         fprintf(stdout, "New obj found. NEW: %f\n", obj_tmp/nstudents);
         obj = obj_tmp/nstudents;
+        bestSol = sol;
     }
 }
 
