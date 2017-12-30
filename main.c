@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <time.h>
 
 #define N (3+1) // number of parameters have to receive from command line
 #define BUF 10 // buffer size for string
@@ -20,6 +21,7 @@ void quickSort(int *arr, int *arr2, int low, int high);
 int partition(int *arr, int *arr2, int low, int high);
 void swap(int *a, int *b);
 
+void exam_local_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax);
 void feasible_search(Solution *sol, Solution **psol, int **conflicts, int *timeslot, int nexams, int nstudents, int tmax);
 void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax);
 int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents);
@@ -41,11 +43,14 @@ void check_best_sol(Solution *sol, Solution **psol, int **conflicts, int *timesl
 int power(int base, int exp);
 
 void free2d(int **matr, int n);
+void checksol(int **conflicts, Solution *sol, int tmax);
 
 float obj=INT_MAX;
 
 int main(int argc, char **argv)
 {
+    srand((unsigned) time(NULL));
+
     FILE *fp=NULL;
     Solution *sol, **psol;
     int **table_schedule=NULL, **conflicts=NULL; //from instanceXX.stu and instanceXX.exm
@@ -158,10 +163,31 @@ int main(int argc, char **argv)
     fprintf(stdout, "Searching several feasible solution...\n");
     feasible_search(sol, psol, conflicts, timeslots, nexams, nstudents, tmax);
 
+    for(i=0; i<tmax; i++)
+        timeslots[i]=i; // at the beginning is from 0 to 'tmax', it will modified after
+
+    fprintf(stdout, "Local searching...\n");
+    for (i = 0; i < 100; ++i) {
+        exam_local_search(sol, psol, conflicts, nexams, nstudents, tmax);
+        check_best_sol(sol, psol, conflicts,timeslots, nstudents, tmax);
+    }
+
+    check_best_sol(sol, psol, conflicts,timeslots, nstudents, tmax);
     fprintf(stdout, "Best obj is: %.3f\n", obj);
+
 
 //    fprintf(stdout, "Swapping time slot and searching for a better solution...\n");
 //    perm(0, conflicts, sol, psol, timeslots, mark, nexams, nstudents, tmax);
+
+    checksol(conflicts,sol,tmax);
+
+    for (i=0;i<tmax;++i) {
+        printf("%d:\t",i);
+        for (j=0;j<sol[i].currpos;++j) {
+            printf("%d ",sol[i].e[j]);
+        }
+        printf("\n");
+    }
 
     ///DEALLOCATION AND END OF PROGRAM
     for(i=0; i<tmax; i++)
@@ -172,6 +198,69 @@ int main(int argc, char **argv)
     free2d(conflicts, nexams);
 
     return 0;
+}
+
+void exam_local_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax) {
+    int examId, j, k;
+    int *slotsToAvoid = calloc((size_t) tmax, sizeof(int));
+
+    examId = rand() % nexams;   //id of random exam
+
+    int examSlot;
+    int examIndex;
+
+    for (j = 0; j < tmax; ++j) {
+        for (k = 0; k < sol[j].currpos; ++k) {
+            if (sol[j].e[k] == examId) {    //salvo slot e index dell'esame per dopo
+                examSlot = j;
+                examIndex = k;
+                slotsToAvoid[j] = 1;
+            }
+
+            if (conflicts[examId][sol[j].e[k]] != 0) {
+                slotsToAvoid[j] = 1;
+            }
+        }
+    }
+
+    for (j = 0; j < 10; ++j) {
+        int randSlot = rand() % tmax;
+        if (slotsToAvoid[randSlot] == 0) {
+            if (sol[randSlot].currpos >= sol[randSlot].dim) { // i need to realloc sol[randSlot].e, because of it was allocate for 'nexams'
+                sol[randSlot].dim = sol[randSlot].dim * 2;
+                sol[randSlot].e = realloc(sol[randSlot].e, sol[randSlot].dim * sizeof(int));
+            }
+
+            sol[randSlot].e[(sol[randSlot].currpos++)] = examId;
+            break;
+        }
+    }
+    if (j == 10)
+        return;
+
+    sol[examSlot].e[examIndex] = sol[examSlot].e[(sol[examSlot].currpos--)-1];
+}
+
+void checksol(int **conflicts, Solution *sol, int tmax)
+{
+    int i, j, k,w=0;
+
+    for(i=0; i<tmax; i++){
+        for(j=0; j<sol[i].currpos; j++){
+            w++;
+            int e1 = sol[i].e[j];
+            for(k=0; k<sol[i].currpos; k++){
+                if(k!=j){
+                    int e2 = sol[i].e[k];
+                    if(conflicts[e1][e2]!=0){
+                        printf("HAI SBAGLIATO GAY l'esame %d fa conflitto con %d sono nel timeslot %d\n", sol[i].e[j], sol[i].e[k], i);
+
+                    }
+                }
+            }
+        }
+    }
+    printf("CHECK = %d, timeslots = %d\n", w, tmax);
 }
 
 void feasible_search(Solution *sol, Solution **psol, int **conflicts, int *timeslots, int nexams, int nstudents, int tmax)
