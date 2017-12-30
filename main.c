@@ -421,7 +421,6 @@ void dens(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstud
     int *mark, *density, *newdens, *idcorr, *timeslots;
 
     density = calloc(tmax, sizeof(int));
-    fprintf(stdout, "Generation of 'density array'...\n");
     density_gen(density, conflicts, sol, tmax);
 
     for(i=0; i<tmax; i++)
