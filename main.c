@@ -20,7 +20,7 @@ void quickSort(int *arr, int *arr2, int low, int high);
 int partition(int *arr, int *arr2, int low, int high);
 void swap(int *a, int *b);
 
-void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax);
+void feasible_search(Solution *sol, Solution **psol, int **conflicts, int *timeslot, int nexams, int nstudents, int tmax);
 void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax);
 int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents);
 int is_forbidden(Solution *sol, int **conflicts, int exam, int timeslot, int *tabulist, int tls);
@@ -50,7 +50,7 @@ int main(int argc, char **argv)
     Solution *sol, **psol;
     int **table_schedule=NULL, **conflicts=NULL; //from instanceXX.stu and instanceXX.exm
     int tmax=0; //from instanceXX.slo
-    int i=0, j=0, k=0, nexams=0, nstudents=-1, tmp_dim=1000, examid=0, nstudconf=0;
+    int i=0, j=0, k=0, nexams=0, nstudents=-1, tmp_dim=1000, examid=0, nstudconf=0, *timeslots;
     char buffer[BUF], studentid[BUF], student_tmp[BUF]=" ";
 
     if(argc!=N){
@@ -151,8 +151,12 @@ int main(int argc, char **argv)
         sol[i].currpos=0;
     }
 
+    timeslots = malloc(tmax*sizeof(int)); // the real order of time slots
+    for(i=0; i<tmax; i++)
+        timeslots[i]=i; // at the beginning is from 0 to 'tmax', it will modified after
+
     fprintf(stdout, "Searching several feasible solution...\n");
-    feasible_search(sol, psol, conflicts, nexams, nstudents, tmax);
+    feasible_search(sol, psol, conflicts, timeslots, nexams, nstudents, tmax);
 
     fprintf(stdout, "Best obj is: %.3f\n", obj);
 
@@ -170,14 +174,10 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams, int nstudents, int tmax)
+void feasible_search(Solution *sol, Solution **psol, int **conflicts, int *timeslots, int nexams, int nstudents, int tmax)
 {
     int i=0, j=0, k=0, f=0, swapn=nexams/2, swi=0, swj=0, tmp=0;
-    int *timeslots, *priority, *stexams;
-
-    timeslots = malloc(tmax*sizeof(int));
-    for(i=0; i<tmax; i++)
-        timeslots[i]=i;
+    int *priority, *stexams;
 
     priority = calloc(nexams, sizeof(int)); // each indexes represent an exam and the value of that index represent the total number of conflicts between this exam and the others
     stexams = malloc(nexams*sizeof(int)); // it will contain a sorted number of indexes (each index represent an exam) based on the priority of the previous array
@@ -196,6 +196,7 @@ void feasible_search(Solution *sol, Solution **psol, int **conflicts, int nexams
         fprintf(stdout, "Can't found it. Apllying Tabù Search with %d exams in extra time slot...\n", sol[tmax].currpos);
         if(tabu_search(sol, conflicts, nexams, tmax, nstudents)==0) {
             check_best_sol(sol, psol, conflicts, timeslots, nstudents, tmax);
+            fprintf(stdout, "Sorting like Gauss function...\n");
             dens(sol, psol, conflicts, nexams, nstudents, tmax);
         }
         else
@@ -463,9 +464,6 @@ void density_gen(int *density, int **conflicts, Solution *sol, int tmax)
             for(j=0; j<=i+5 && j<tmax; j++){ //after 5 i don't pay no kind of penalty - cycle to compare time slot 'i' with time slot 'j'
                 for(t=0; t<sol[j].currpos; t++){ //i have to compare all exams, for this reason 'j' and 't' start from zero
                     if(sol[i].e[k]!=sol[j].e[t]){
-                        if(j>i)
-                            density[i] += conflicts[sol[i].e[k]][sol[j].e[t]];
-                        else
                             density[i] += conflicts[sol[i].e[k]][sol[j].e[t]];
                     }
                 }
@@ -612,8 +610,8 @@ void check_best_sol(Solution *sol, Solution **psol, int **conflicts, int *timesl
         psol[i] = &sol[timeslots[i]];
 
     ///MIN OBJ 2^(5-i)*Ne,e'/|S|
-    for(i=0; i<tmax-1; i++){ //cycle in time slot sol[0, ..., tmax-1]
-        for(k=0; k<psol[i]->currpos; k++){ //cycle in sol[i]->e[0, ..., k] - exams i scheduled in time slot 'i'
+    for(i=0; i<tmax-1; i++){ //cycle in time slot psol[0, ..., tmax-1]
+        for(k=0; k<psol[i]->currpos; k++){ //cycle in psol[i]->e[0, ..., k] - exams i scheduled in time slot 'i'
             for(j=i; j<=i+5 && j<tmax; j++){ //after 5 i don't pay no kind of penalty - cycle to compare time slot 'i' with time slot 'j'
                 if(i==j){ //if i'm considering the same time slot i must avoid to compare eX - eY and then eY - eX
                     for(t=k+1; t<psol[j]->currpos; t++) //so i start from the same value+1
