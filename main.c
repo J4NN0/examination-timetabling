@@ -9,7 +9,7 @@
 #define BUF 100 // buffer size for string
 #define MSMI 50 // multi-start metaheuristics
 #define TSI 500000 // max iteration for tabu search
-#define SA 600000 // max iteration for simulated annealing
+#define SA 500000 // max iteration for simulated annealing
 
 /* It's receives from the command line 3 files, respectively: instancename -t timelimit
  * Instance files: instanceXX.stu instanceXX.exm instanceXX.slo */
@@ -30,17 +30,20 @@ void swap(int *a, int *b);
 
 void feasible_search(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nexams, int nstudents, int tmax);
 void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nexams, int tmax);
-int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents);
-int is_forbidden(Solution *sol, int **conflicts, int exam, int timeslot, int *tabulist, int tls);
-float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts, int tmax, int nstudents);
-int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int *tabulist, int *next, int dimtabu, int nexams, int tmax);
+int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax);
+int is_forbidden(Solution *sol, int **conflicts, int exam, int timeslot, int *tabulist, int dimtabu);
+float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts);
+void update_tabu(Solution *sol, int exam, int ts, int **conflicts, int *tabulist, int *next, int dimtabu, int nexams, int tmax);
+int schedule_exam(Solution *sol, int **conflicts, int exam, int ts, int nexams, int tmax);
 
-void cpy_sol(Solution *sol, Solution **bsol, int tmax);
 void simulated_annealing(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nexams, int nstudents, int tmax);
-int search_timeslot(Solution *sol, int **conflicts, int exam, int tmax, int *ets, int *epos);
-void neighborhood(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax, int iter, float temperature, int exam, int ts, int ets, int epos);
+void save_sol(Solution *sol, Solution **psol, int tmax);
+void restore_sol(Solution *sol, Solution **psol, int tmax);
+int neighborhood(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int nexams, int tmax, int iter, float temperature, int exam);
+int swap_timeslot(Solution *sol, Solution **bsol, Solution **wsol, char *filename, int **conflicts, int nstudents, int tmax, int iter, float temperature, int timeslot);
+float check_tmp_sol(Solution **wsol, Solution **bsol, char*filename, int **conflicts, int nstudents, int tmax);
 
-int check_best_sol(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax);
+float check_best_sol(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax);
 void print_bestsol(Solution **bsol, char *filename, int tmax);
 int power(int base, int exp);
 
@@ -122,22 +125,8 @@ int main(int argc, char **argv)
     fprintf(stdout, "Searching several feasible solution...\n");
     feasible_search(sol, bsol, instancename, conflicts, nexams, nstudents, tmax);
 
-    int tmp;
-    for(k=0; k<nexams; k++) {
-        tmp=0;
-        for (i = 0; i < tmax; i++) {
-            //printf("Time slot %d\n", i);
-            for (j = 0; j < sol[i].currpos; j++) {
-                if(k==sol[i].e[j])
-                    tmp++;
-                if(tmp==2)
-                    printf("Time slot %d: %d - %d\n", i, k, sol[i].e[j]);
-            }
-        }
-    }
-
     fprintf(stdout, "Simulated Annealing...\n");
-    cpy_sol(sol, bsol, tmax);
+    restore_sol(sol, bsol, tmax); // put in sol the actual best solution
     simulated_annealing(sol, bsol, instancename, conflicts, nexams, nstudents, tmax);
 
     fprintf(stdout, "Best obj is: %f\n", obj);
@@ -259,7 +248,7 @@ void feasible_search(Solution *sol, Solution **bsol, char *filename, int **confl
     graph_coloring_greedy(sol, conflicts, stexams, nexams, tmax);
     if(sol[tmax].currpos>0){ // if i have exams in my extra time slot i have to schedule those exams
         fprintf(stdout, "[+] Can't found it. Apllying Tabù Search with %d exams in extra time slot...\n", sol[tmax].currpos);
-        if(tabu_search(sol, conflicts, nexams, tmax, nstudents)==0)
+        if(tabu_search(sol, conflicts, nexams, tmax)==0)
             check_best_sol(sol, bsol, filename, conflicts, nstudents, tmax);
         else
             fprintf(stdout, "Aborting Tabù Search...\n\n");
@@ -269,7 +258,7 @@ void feasible_search(Solution *sol, Solution **bsol, char *filename, int **confl
 
     fprintf(stdout, "[+] Multi-start metaheuristics...\n");
     for(i=0; i<MSMI; i++){
-        for(j=0; j<tmax+1; j++) // reset 'sol'
+        for(j=0; j<tmax; j++) // reset 'sol'
             sol[j].currpos=0;
 
         for(k=0; k<swapn; k++){
@@ -283,7 +272,7 @@ void feasible_search(Solution *sol, Solution **bsol, char *filename, int **confl
 
         graph_coloring_greedy(sol, conflicts, stexams, nexams, tmax);
         if(sol[tmax].currpos>0){ // if i have exams in my extra time slot i have to schedule those exams
-            if(tabu_search(sol, conflicts, nexams, tmax, nstudents)==0)
+            if(tabu_search(sol, conflicts, nexams, tmax)==0)
                 check_best_sol(sol, bsol, filename, conflicts, nstudents, tmax);
             else
                 fprintf(stdout, "Aborting Tabù Search...\n\n");
@@ -377,23 +366,23 @@ void graph_coloring_greedy(Solution *sol, int **conflicts, int *stexams, int nex
     free(available);
 }
 
-int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstudents)
+int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax)
 {
-    int i=0, j=0, k=0, ts=-1, *tabulist, dimtabu=(tmax/2)+2, next=0;
-    float obj_min=INT_MAX, obj_tmp=0;
+    int i=0, j=0, k=0, ts=-1, *tabulist, dimtabu=(tmax/2)+4, next=0;
+    float confl_min=INT_MAX, confl_tmp=0;
 
     tabulist = malloc(dimtabu*sizeof(int));
     for(i=0; i<dimtabu; i++)
         tabulist[i]=-1; // '-1' means empty
 
     for(i=0, k=0; i<sol[tmax].currpos; i++, k++){ // i use this cycle to take exams i put in the extra time slot
-        obj_min=INT_MAX;
+        confl_min=INT_MAX;
         ts=-1;
         for(j=0; j<tmax; j++){ // 'j' is the hypothetical time slot in which i want to put my exam sol[tmax].e[i]
             if(is_forbidden(sol, conflicts, sol[tmax].e[i], j, tabulist, dimtabu)==0){
-                obj_tmp = confl_exams(sol, sol[tmax].e[i], j, conflicts, tmax, nstudents); // i calculate for that time slot the temporary 'obj'
-                if(obj_tmp<obj_min){ // if this obj is better than the previous i remember the time slot in which my 'obj' it the best
-                    obj_min = obj_tmp;
+                confl_tmp = confl_exams(sol, sol[tmax].e[i], j, conflicts); // i calculate for that time slot the number of conflicts
+                if(confl_tmp<confl_min){ // if this 'confl' is lower than the previous i remember the time slot in which my 'confl' it the lowest
+                    confl_min = confl_tmp;
                     ts = j;
                 }
             }
@@ -402,8 +391,10 @@ int tabu_search(Solution *sol, int **conflicts, int nexams, int tmax, int nstude
             return 1;
         if(k==TSI) // i've reached the max allowed iteration
             return 1;
-        schedule_exam(sol, sol[tmax].e[i], ts, conflicts, tabulist, &next, dimtabu, nexams, tmax); // i schedule my exam in time slot 'ts' which has the best temporary 'obj'
+        update_tabu(sol, sol[tmax].e[i], ts, conflicts, tabulist, &next, dimtabu, nexams, tmax);
     }
+
+    sol[tmax].currpos=0;
 
     free(tabulist);
 
@@ -429,20 +420,29 @@ int is_forbidden(Solution *sol, int **conflicts, int exam, int timeslot, int *ta
     return 0;
 }
 
-float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts, int tmax, int nstudents)
+float confl_exams(Solution *sol, int exam, int timeslot, int **conflicts)
 {
-    int i=0, k=0;
+    int i=0, confl=0;
 
-    // instead of search for the min 'tmp_obj' i search time slot with less number of conflicting exam with the mine
     for(i=0; i<sol[timeslot].currpos; i++){
         if(conflicts[exam][sol[timeslot].e[i]]>0)
-            k += conflicts[exam][sol[timeslot].e[i]];
+            confl += conflicts[exam][sol[timeslot].e[i]];
     }
 
-    return k;
+    return confl;
 }
 
-int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int *tabulist, int *next, int dimtabu, int nexams, int tmax)
+void update_tabu(Solution *sol, int exam, int ts, int **conflicts, int *tabulist, int *next, int dimtabu, int nexams, int tmax)
+{
+    schedule_exam(sol, conflicts, exam, ts, nexams, tmax); // i schedule my exam in time slot 'ts' which has the lowest temporary 'confl'
+
+    tabulist[(*next)]=exam; // save move as tabù
+    (*next)++;
+    if((*next)>=dimtabu)
+        (*next)=0;
+}
+
+int schedule_exam(Solution *sol, int **conflicts, int exam, int ts, int nexams, int tmax)
 {
     int i=0, j=0, nconfl=0, flag=0, *idel;
 
@@ -476,114 +476,210 @@ int schedule_exam(Solution *sol, int exam, int ts, int **conflicts, int *tabulis
     sol[ts].currpos = sol[ts].currpos-nconfl+1; // resize 'currpos' of time slot 'ts'
     sol[ts].e[sol[ts].currpos-1] = exam; // add exam i want to schedule in time slot 'ts'
 
-    tabulist[(*next)]=exam; // save move as tabù
-    (*next)++;
-    if((*next)>=dimtabu)
-        (*next)=0;
-
     free(idel);
 
     return nconfl;
 }
 
-void cpy_sol(Solution *sol, Solution **bsol, int tmax)
+void simulated_annealing(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nexams, int nstudents, int tmax)
+{
+    Solution **tsol, **wsol;
+    int i=-1, choice=0, exam=0, ts=0;
+    float t=obj;
+
+    tsol = malloc(tmax*sizeof(Solution*)); // temporary sol, to save the current sol and backtrack sol if necessary
+    wsol = malloc(tmax*sizeof(Solution*)); // swap sol, to avoid full swap of time slot in swap_timeslot(...)
+
+    while(i<SA){
+        i++; // global iter
+        printf("%d to %d\r", i, SA);
+        choice = rand() % 2; // 0 swap time slot, 1 swap exam
+        if(choice>0){
+            exam = rand() % nexams;
+            save_sol(sol, tsol, tmax); // save actual solution in case of backtrack
+            if(neighborhood(sol, bsol, filename, conflicts, nstudents, nexams, tmax, i, t, exam)==1)
+                restore_sol(sol, tsol, tmax); // restore 'tsol'
+        }
+        else{
+            ts = rand() % tmax;
+            save_sol(sol, tsol, tmax);
+            if(swap_timeslot(sol, bsol, wsol, filename, conflicts, nstudents, tmax, i, t, ts)==1)
+                restore_sol(sol, tsol, tmax);
+        }
+    }
+
+    free(tsol);
+    free(wsol);
+}
+
+void save_sol(Solution *sol, Solution **psol, int tmax)
+{
+    int i=0;
+
+    for(i=0; i<tmax; i++)
+        psol[i] = &sol[i];
+}
+
+void restore_sol(Solution *sol, Solution **psol, int tmax)
 {
     int i=0, j=0;
 
     for(i=0; i<tmax; i++){
-        sol[i].currpos = bsol[i]->currpos;
-        for(j=0; j<bsol[i]->currpos; j++){
-            sol[i].e[j] = bsol[i]->e[j];
+        sol[i].currpos = psol[i]->currpos;
+        for(j=0; j<psol[i]->currpos; j++){
+            sol[i].e[j] = psol[i]->e[j];
         }
     }
 }
 
-void simulated_annealing(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nexams, int nstudents, int tmax)
+int neighborhood(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int nexams, int tmax,
+                  int iter, float temperature, int exam)
 {
-    int i=0, ts=-1, exam=0, ets=0, epos=0;
-    float t=obj;
+    int i=0, j=0, ets=0, epos=0, flag=0, ts=0;
+    float obj_tmp=0, e=2.718281, p=0, prand=0;
 
-    while(i<SA){
-        printf("%d to %d\r", i, SA);
-        i++;
-        ts=-1;
-        while(ts==-1){
-            exam = rand() % nexams;
-            ts = search_timeslot(sol, conflicts, exam, tmax, &ets, &epos);
-        }
-        neighborhood(sol, bsol, filename, conflicts, nstudents, tmax, i, t, exam, ts, ets, epos);
-    }
-}
+    ts = rand() % tmax;
 
-int search_timeslot(Solution *sol, int **conflicts, int exam, int tmax, int *ets, int *epos)
-{
-    int i=0, j=0, flag=0, available=0, nts=0, ts=0, *notgranted;
-
-    notgranted = calloc(tmax, sizeof(int)); // 0 if time slot is available, 1 otherwise
-
-    for(i=0; i<tmax; i++){
-        for(j=0; j<sol[i].currpos; j++){
+    for(i=0; i<tmax && flag==0; i++){
+        for(j=0; j<sol[i].currpos && flag==0; j++){
             if(sol[i].e[j]==exam){
-                notgranted[i] = 1;
-                (*ets) = i; // save time slot where is 'exam'
-                (*epos) = j; // save position of 'exam' in time slot
-            }
-            if(conflicts[exam][sol[i].e[j]]>0)
-                notgranted[i] = 1;
-        }
-    }
-
-    for(i=0; i<tmax; i++) // check if there is at least one available time slot
-        if(notgranted[i]==0)
-            available++;
-
-    if(available==0)
-        return -1; // no available time slot
-
-    available = rand() % available;
-    for(i=0; i<tmax && flag==0; i++){ // random choice of the available time slots
-        if(notgranted[i]==0){
-            nts++;
-            if(nts==available) {
-                flag = 1;
-                ts = i;
+                flag=1;
+                ets = i; // save time slot where 'exam' is located
+                epos = j; // save position of 'exam' in time slot
             }
         }
     }
-
-    free(notgranted);
-
-    return ts;
-}
-
-void neighborhood(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax, int iter,
-                  float temperature, int exam, int ts, int ets, int epos)
-{
-    float obj_tmp=0, e=2.71828183, p=0, prand=0;
-
-    // scheduling 'exam' in time slot 'ts'
-    sol[ts].e[sol[ts].currpos] = exam;
-    sol[ts].currpos++;
     // delete 'exam' from its previous time slot
     sol[ets].e[epos] = sol[ets].e[sol[ets].currpos-1];
     sol[ets].currpos--;
 
-    if((obj_tmp=check_best_sol(sol, bsol, filename, conflicts, nstudents, tmax))!=obj){
+    // scheduling 'exam' in time slot 'ts'
+    if(schedule_exam(sol, conflicts, exam, ts, nexams, tmax)>0) // if i put exams in extra time slot i need to call tabù
+        if(tabu_search(sol, conflicts, nexams, tmax)==1)
+            printf("Aborting tabu search...\n");
+
+    if((obj_tmp=check_best_sol(sol, bsol, filename, conflicts, nstudents, tmax))>obj){
         // solution is not better from the previous and i need to do probability calculation
         temperature = temperature/(logf(iter+1)); // T = To/(ln(I+1))
         p = powf(e, -((obj_tmp-obj)/temperature)); // p = exp^(-(F(x_new)-F(x_old))/T)
         prand = rand() % 2;
-        if(prand>p){ //i need to backtrack the scheduled exam
-            // unscheduling 'exam' in time slot 'ts'
-            sol[ts].currpos--;
-            // rescheduling 'exam' in its previous time slot
-            sol[ets].e[sol[ets].currpos] = exam;
-            sol[ets].currpos++;
-        }
+        if(prand>p) // i need to backtrack the scheduled exam
+            return 1;
     }
+
+    return 0;
 }
 
-int check_best_sol(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax)
+int swap_timeslot(Solution *sol, Solution **bsol, Solution **wsol, char *filename, int **conflicts, int nstudents,
+                  int tmax, int iter, float temperature, int timeslot)
+{
+    int t=0, j=0, tswap=timeslot, tmp=0, flag=0, *order, *border;
+    float obj_tmp=0, e=2.718281, p=0, prand=0;
+
+    /* Search for best time slot */
+    /*order = malloc(tmax*sizeof(int)); // temporary order of time slots
+    border = malloc(tmax*sizeof(int)); // best order of time slots
+
+    for(t=0; t<tmax; t++){ // 't' is the time slot i want to swap with 'timeslot'
+        for(j=0; j<tmax; j++)
+            order[j] = j; // natural order of time slots, from 0 to tmax-1
+
+        if(t!=timeslot){ // swapping time slot
+            tmp = order[t];
+            order[t] = timeslot;
+            order[timeslot] = tmp;
+        }
+
+        for(j=0; j<tmax; j++)
+            wsol[j] = &sol[order[j]]; // set the new order of time slots
+
+        if((obj_tmp=check_tmp_sol(wsol, bsol, filename, conflicts, nstudents, tmax))==obj){ // new best sol is found
+            flag=1;
+            for(j=0; j<tmax; j++)
+                border[j] = order[j]; // save current best order
+        }
+    }
+
+    free(order);
+    free(border);
+
+    if(flag==0){ // i have no found new best solution and i need to do probability calculation
+        temperature = temperature/(logf(iter+1)); // T = To/(ln(I+1))
+        p = powf(e, -((obj_tmp-obj)/temperature)); // p = exp^(-(F(x_new)-F(x_old))/T)
+        prand = rand() % 2;
+        if(prand>p) // i need to backtrack the scheduled exam
+            return 1;
+    }
+
+    save_sol(sol, bsol, tmax);
+
+    return 0;*/
+
+    /* Swap random timeslot */
+    while(tswap==timeslot)
+        tswap = rand() % tmax;
+
+    order = malloc(tmax*sizeof(int)); // temporary order of time slots
+    for(j=0; j<tmax; j++)
+        order[j] = j; // natural order of time slots, from 0 to tmax-1
+
+    order[timeslot] = tswap;
+    order[tswap] = timeslot;
+
+    for(j=0; j<tmax; j++)
+        wsol[j] = &sol[order[j]]; // set the new order of time slots
+
+    free(order);
+
+    if((obj_tmp=check_tmp_sol(wsol, bsol, filename, conflicts, nstudents, tmax))>obj){
+        // solution is not better from the previous and i need to do probability calculation
+        temperature = temperature/(logf(iter+1)); // T = To/(ln(I+1))
+        p = powf(e, -((obj_tmp-obj)/temperature)); // p = exp^(-(F(x_new)-F(x_old))/T)
+        prand = rand() % 2;
+        if(prand>p) // i need to backtrack the scheduled exam
+            return 1;
+    }
+
+    save_sol(sol, wsol, tmax);
+
+    return 0;
+}
+
+float check_tmp_sol(Solution **wsol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax)
+{
+    int i=0, j=0, k=0, t=0;
+    float obj_tmp=0;
+
+    for(i=0; i<tmax-1; i++){
+        for(k=0; k<wsol[i]->currpos; k++){
+            for(j=i; j<=i+5 && j<tmax; j++){
+                if(i==j){
+                    for(t=k+1; t<wsol[j]->currpos; t++)
+                        obj_tmp += conflicts[wsol[i]->e[k]][wsol[j]->e[t]]*power(2, 5-(j-i));
+                }
+                else{
+                    for(t=0; t<wsol[j]->currpos; t++)
+                        if(wsol[i]->e[k]!=wsol[j]->e[t])
+                            obj_tmp += conflicts[wsol[i]->e[k]][wsol[j]->e[t]]*power(2, 5-(j-i));
+                }
+            }
+        }
+    }
+    obj_tmp = obj_tmp/nstudents;
+
+    if(obj_tmp<obj){
+        fprintf(stdout, "[!] New obj found. NEW: %f\n", obj_tmp);
+        obj = obj_tmp;
+
+        for(i=0; i<tmax; i++)
+            bsol[i] = wsol[i]; // updating new best sol
+        print_bestsol(bsol, filename, tmax);
+    }
+
+    return obj_tmp;
+}
+
+float check_best_sol(Solution *sol, Solution **bsol, char *filename, int **conflicts, int nstudents, int tmax)
 {
     int i=0, j=0, k=0, t=0;
     float obj_tmp=0;
