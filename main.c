@@ -64,7 +64,7 @@ int main(int argc, char **argv)
     int **table_schedule, **conflicts; //from instanceXX.stu and instanceXX.exm
     int tmax=0; //from instanceXX.slo
     int i=0, j=0, k=0, nexams=0, nstudents=-1, nstudconf=0;
-    char instancename[BUF];
+    char instancename[BUF] = "";
 
     srand(time(NULL));
 
@@ -74,32 +74,27 @@ int main(int argc, char **argv)
     }
 
     ///.EXM FILE
-    strcpy(instancename, argv[1]);
-    strcat(instancename, "/");
     strcat(instancename, argv[1]);
     strcat(instancename, ".exm");
     nexams = exmFile_read(instancename);
+    sprintf(instancename,"");
 
     ///.STU FILE
-    strcpy(instancename, argv[1]);
-    strcat(instancename, "/");
     strcat(instancename, argv[1]);
     strcat(instancename, ".stu");
     table_schedule = stuFile_read(instancename, &nstudents, nexams);
+    sprintf(instancename,"");
 
     ///.SLO FILE
-    strcpy(instancename, argv[1]);
-    strcat(instancename, "/");
     strcat(instancename, argv[1]);
     strcat(instancename, ".slo");
     tmax = sloFile_read(instancename);
+    sprintf(instancename,"");
 
     fprintf(stdout, "Total number of exams: %d\n"
                     "Total students: %d\n"
                     "Number of time slots: %d\n\n", nexams, nstudents+1, tmax);
 
-    strcpy(instancename, argv[1]);
-    strcat(instancename, "/");
     strcat(instancename, argv[1]);
     strcat(instancename, "_OMAAL_group18.sol");
     timelimit = atoi(argv[3]);
