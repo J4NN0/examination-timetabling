@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <math.h>
 #include <time.h>
+#include <sys/timeb.h>
 
 #define N (3+1) // number of parameters have to receive from command line
 #define BUF 100 // buffer size for string
@@ -51,12 +52,18 @@ void free2d(int **matr, int n);
 
 float obj=INT_MAX;
 
+struct timeb startTime;
+
+int timelimit = 0;
+
 int main(int argc, char **argv)
 {
+    ftime(&startTime);
+
     Solution *sol, **bsol;
     int **table_schedule, **conflicts; //from instanceXX.stu and instanceXX.exm
     int tmax=0; //from instanceXX.slo
-    int i=0, j=0, k=0, timelimit=0, nexams=0, nstudents=-1, nstudconf=0;
+    int i=0, j=0, k=0, nexams=0, nstudents=-1, nstudconf=0;
     char instancename[BUF];
 
     srand(time(NULL));
@@ -490,7 +497,10 @@ void simulated_annealing(Solution *sol, Solution **bsol, char *filename, int **c
     tsol = malloc(tmax*sizeof(Solution*)); // temporary sol, to save the current sol and backtrack sol if necessary
     wsol = malloc(tmax*sizeof(Solution*)); // swap sol, to avoid full swap of time slot in swap_timeslot(...)
 
-    while(i<SA){
+    struct timeb now;
+
+    ftime(&now);
+    while (now.time - startTime.time < timelimit) {
         i++; // global iter
         printf("%d to %d\r", i, SA);
         choice = rand() % 2; // 0 swap time slot, 1 swap exam
@@ -506,6 +516,8 @@ void simulated_annealing(Solution *sol, Solution **bsol, char *filename, int **c
             if(swap_timeslot(sol, bsol, wsol, filename, conflicts, nstudents, tmax, i, t, ts)==1)
                 restore_sol(sol, tsol, tmax);
         }
+
+        ftime(&now);
     }
 
     free(tsol);

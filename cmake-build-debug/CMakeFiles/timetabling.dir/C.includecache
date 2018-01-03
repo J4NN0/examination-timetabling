@@ -15,4 +15,8 @@ string.h
 -
 limits.h
 -
+math.h
+-
+time.h
+-
 
